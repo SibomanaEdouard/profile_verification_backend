@@ -5,9 +5,8 @@ const passport = require('passport');
 const morgan = require('morgan');
 const path = require('path');
 const dotenv = require('dotenv');
-// import { initializePassport } from './controllers/AuthController';
+const session = require('express-session');
 const { initializePassport } = require("./controllers/AuthController");
-
 
 // Load environment variables
 dotenv.config();
@@ -17,42 +16,62 @@ const app = express();
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI, {
-    // Timeout options
     serverSelectionTimeoutMS: 999999, 
-  }).then(() => {
+}).then(() => {
     console.log('Connected to MongoDB');
-  }).catch((err) => {
+}).catch((err) => {
     console.error('MongoDB connection error:', err);
-  });
-  
-  
+});
 
 // Middleware
 app.use(morgan('dev')); // HTTP request logger
 app.use(cors({
-    // origin:*
-  origin: process.env.FRONTEND_URL,
-  credentials: true
+    origin: process.env.FRONTEND_URL,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Initialize Passport
-initializePassport(passport);
+// Session configuration
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'your-secret-key',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    }
+}));
+
+// Initialize Passport and session
 app.use(passport.initialize());
+app.use(passport.session());
+
+// Passport serialization
+passport.serializeUser((user, done) => {
+    done(null, user);
+});
+
+passport.deserializeUser((user, done) => {
+    done(null, user);
+});
+
+// Initialize Passport strategies
+initializePassport(passport);
+
+// Serve uploaded files
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Serve uploaded files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Import routes
-const authRoutes = require('./routes');
-const profileRoutes = require('./routes');
-const verificationRoutes = require('./routes');
+const routes = require('./routes');
 
 // Use routes
-app.use('/api/auth', authRoutes);
-app.use('/api/profile', profileRoutes);
-app.use('/api/verify', verificationRoutes);
+app.use('/api/v1', routes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
