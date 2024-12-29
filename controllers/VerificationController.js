@@ -3,8 +3,6 @@ const User = require('../models/User');
 const cloudinary = require('cloudinary').v2;
 const crypto = require('crypto');
 const axios = require('axios');
-
-// Configure Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -20,17 +18,20 @@ class VerificationController {
 
       console.log('Received file:', req.file);
 
-      // The file.path will now be the Cloudinary URL
-      const { data: { text } } = await Tesseract.recognize(
-        req.file.path,
-        'eng',
-        { 
-          logger: m => console.log(m),
-          workerPath: 'https://unpkg.com/tesseract.js@v4.0.0/dist/worker.min.js',
-          langPath: 'https://tessdata.projectnaptha.com/4.0.0',
-          corePath: 'https://unpkg.com/tesseract.js-core@v4.0.0/tesseract-core.wasm.js',
-        }
-      );
+      // Create worker with proper configuration
+      const worker = await Tesseract.createWorker({
+        logger: m => console.log(m)
+      });
+
+      // Initialize worker
+      await worker.loadLanguage('eng');
+      await worker.initialize('eng');
+
+      // Recognize text
+      const { data: { text } } = await worker.recognize(req.file.path);
+
+      // Terminate worker
+      await worker.terminate();
 
       // Extract relevant information
       const idNumber = text.match(/ID:\s*([A-Z0-9]+)/i)?.[1];
