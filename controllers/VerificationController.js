@@ -62,24 +62,27 @@ class VerificationController {
 
 
  // Generate image signature for comparison
- static async generateImageSignature(imageUrl) {
+ static async generateImageSignature(imagePath) {
   try {
-    // Download image from Cloudinary URL
-    const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
-    const buffer = Buffer.from(response.data);
+    // Resize image to small dimensions and convert to grayscale for consistent comparison
+    const imageBuffer = await sharp(imagePath)
+      .resize(32, 32, { fit: 'fill' })
+      .grayscale()
+      .raw()
+      .toBuffer();
 
     // Create hash as image signature
-    return crypto.createHash('sha256').update(buffer).digest('hex');
+    return crypto.createHash('sha256').update(imageBuffer).digest('hex');
   } catch (error) {
     console.error('Error generating image signature:', error);
     throw error;
   }
 }
 
+// Calculate similarity percentage between two signatures
 static calculateSimilarity(sig1, sig2) {
-  // Existing code remains the same
   let differences = 0;
-  const totalBits = sig1.length * 4;
+  const totalBits = sig1.length * 4; // Each hex character represents 4 bits
   
   for (let i = 0; i < sig1.length; i++) {
     const byte1 = parseInt(sig1[i], 16);
@@ -90,6 +93,7 @@ static calculateSimilarity(sig1, sig2) {
   return 100 - (differences * 100 / totalBits);
 }
 
+// Process profile picture upload and check similarity
 static async checkProfilePictureSimilarity(req, res) {
   try {
     if (!req.file) {
@@ -113,7 +117,7 @@ static async checkProfilePictureSimilarity(req, res) {
         const existingSignature = await VerificationController.generateImageSignature(user.profilePicture.url);
         const similarity = VerificationController.calculateSimilarity(uploadedSignature, existingSignature);
 
-        if (similarity > 85) {
+        if (similarity > 85) { // Threshold for similarity
           return {
             userId: user._id,
             username: user.username,
@@ -129,10 +133,24 @@ static async checkProfilePictureSimilarity(req, res) {
     const validConflicts = conflicts.filter(Boolean);
 
     if (validConflicts.length > 0) {
-      // Store temporary Cloudinary URL
+      // Store temporary file path
       await User.findByIdAndUpdate(req.user.id, {
         'profilePicture.tempPath': req.file.path
       });
+
+      // Create notifications for existing users
+      await Promise.all(validConflicts.map(conflict => 
+        global.Notification.createNotification({
+          userId: conflict.userId,
+          type: 'PROFILE_PICTURE_SIMILARITY',
+          message: 'Someone attempted to upload a profile picture similar to yours',
+          data: {
+            similarity: conflict.similarity,
+            timestamp: new Date(),
+            uploaderId: req.user.id
+          }
+        })
+      ));
 
       return res.json({
         success: false,
@@ -164,7 +182,6 @@ static async checkProfilePictureSimilarity(req, res) {
     res.status(500).json({ error: 'Error processing profile picture' });
   }
 }
-
 
 // Handle user's decision about conflict
 static async resolveProfilePictureConflict(req, res) {
