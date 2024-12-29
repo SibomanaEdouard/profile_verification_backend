@@ -1,13 +1,10 @@
 const Tesseract = require('tesseract.js');
+// const Jimp = require('jimp');
 const User = require('../models/User');
-const cloudinary = require('cloudinary').v2;
+const sharp = require('sharp');
+const path = require('path');
+const fs = require('fs').promises;
 const crypto = require('crypto');
-const axios = require('axios');
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
-});
 
 class VerificationController {
   static async processNationalId(req, res) {
@@ -16,29 +13,27 @@ class VerificationController {
         return res.status(400).json({ error: 'No file uploaded' });
       }
 
-      console.log('Received file:', req.file);
-
-      // Create worker with proper configuration
-      const worker = await Tesseract.createWorker({
-        logger: m => console.log(m)
+      // Log the received file details
+      console.log('Received file:', {
+        fieldname: req.file.fieldname,
+        originalname: req.file.originalname,
+        mimetype: req.file.mimetype,
+        path: req.file.path
       });
 
-      // Initialize worker
-      await worker.loadLanguage('eng');
-      await worker.initialize('eng');
-
-      // Recognize text
-      const { data: { text } } = await worker.recognize(req.file.path);
-
-      // Terminate worker
-      await worker.terminate();
+      // Perform OCR on the uploaded ID
+      const { data: { text } } = await Tesseract.recognize(
+        req.file.path,
+        'eng',
+        { logger: m => console.log(m) }
+      );
 
       // Extract relevant information
       const idNumber = text.match(/ID:\s*([A-Z0-9]+)/i)?.[1];
       const dateOfBirth = text.match(/DOB:\s*(\d{2}\/\d{2}\/\d{4})/i)?.[1];
       const name = text.match(/Name:\s*([A-Za-z\s]+)/i)?.[1];
 
-      // Update user document with Cloudinary URL
+      // Update user document
       const user = await User.findByIdAndUpdate(
         req.user.id,
         {
@@ -64,189 +59,190 @@ class VerificationController {
     }
   }
 
-  // Generate image signature for comparison
-  static async generateImageSignature(imageUrl) {
-    try {
-      // Download image from Cloudinary URL
-      const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
-      const buffer = Buffer.from(response.data);
 
-      // Create hash as image signature
-      return crypto.createHash('sha256').update(buffer).digest('hex');
-    } catch (error) {
-      console.error('Error generating image signature:', error);
-      throw error;
-    }
+ // Generate image signature for comparison
+ static async generateImageSignature(imageUrl) {
+  try {
+    // Download image from Cloudinary URL
+    const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+    const buffer = Buffer.from(response.data);
+
+    // Create hash as image signature
+    return crypto.createHash('sha256').update(buffer).digest('hex');
+  } catch (error) {
+    console.error('Error generating image signature:', error);
+    throw error;
   }
+}
 
-  static calculateSimilarity(sig1, sig2) {
-    // Existing code remains the same
-    let differences = 0;
-    const totalBits = sig1.length * 4;
-    
-    for (let i = 0; i < sig1.length; i++) {
-      const byte1 = parseInt(sig1[i], 16);
-      const byte2 = parseInt(sig2[i], 16);
-      differences += (byte1 ^ byte2).toString(2).replace(/0/g, '').length;
-    }
-    
-    return 100 - (differences * 100 / totalBits);
+static calculateSimilarity(sig1, sig2) {
+  // Existing code remains the same
+  let differences = 0;
+  const totalBits = sig1.length * 4;
+  
+  for (let i = 0; i < sig1.length; i++) {
+    const byte1 = parseInt(sig1[i], 16);
+    const byte2 = parseInt(sig2[i], 16);
+    differences += (byte1 ^ byte2).toString(2).replace(/0/g, '').length;
   }
+  
+  return 100 - (differences * 100 / totalBits);
+}
 
-  static async checkProfilePictureSimilarity(req, res) {
-    try {
-      if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
+static async checkProfilePictureSimilarity(req, res) {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    console.log('Processing uploaded file:', req.file.path);
+
+    // Generate signature for uploaded image
+    const uploadedSignature = await VerificationController.generateImageSignature(req.file.path);
+
+    // Get all users with profile pictures
+    const users = await User.find({
+      'profilePicture.url': { $exists: true },
+      _id: { $ne: req.user.id }
+    });
+
+    // Check for similar images
+    const conflicts = await Promise.all(users.map(async user => {
+      try {
+        const existingSignature = await VerificationController.generateImageSignature(user.profilePicture.url);
+        const similarity = VerificationController.calculateSimilarity(uploadedSignature, existingSignature);
+
+        if (similarity > 85) {
+          return {
+            userId: user._id,
+            username: user.username,
+            similarity: similarity.toFixed(2)
+          };
+        }
+      } catch (error) {
+        console.error(`Error comparing with user ${user._id}:`, error);
       }
+      return null;
+    }));
 
-      console.log('Processing uploaded file:', req.file.path);
+    const validConflicts = conflicts.filter(Boolean);
 
-      // Generate signature for uploaded image
-      const uploadedSignature = await VerificationController.generateImageSignature(req.file.path);
-
-      // Get all users with profile pictures
-      const users = await User.find({
-        'profilePicture.url': { $exists: true },
-        _id: { $ne: req.user.id }
+    if (validConflicts.length > 0) {
+      // Store temporary Cloudinary URL
+      await User.findByIdAndUpdate(req.user.id, {
+        'profilePicture.tempPath': req.file.path
       });
 
-      // Check for similar images
-      const conflicts = await Promise.all(users.map(async user => {
-        try {
-          const existingSignature = await VerificationController.generateImageSignature(user.profilePicture.url);
-          const similarity = VerificationController.calculateSimilarity(uploadedSignature, existingSignature);
+      return res.json({
+        success: false,
+        conflicts: validConflicts,
+        tempPath: req.file.path,
+        message: 'Similar profile pictures found'
+      });
+    }
 
-          if (similarity > 85) {
-            return {
-              userId: user._id,
-              username: user.username,
-              similarity: similarity.toFixed(2)
-            };
-          }
-        } catch (error) {
-          console.error(`Error comparing with user ${user._id}:`, error);
-        }
-        return null;
-      }));
+    // If no conflicts, proceed with upload
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      {
+        'profilePicture.url': req.file.path,
+        'profilePicture.verified': true,
+        'profilePicture.uploadedAt': new Date()
+      },
+      { new: true }
+    );
 
-      const validConflicts = conflicts.filter(Boolean);
+    res.json({
+      success: true,
+      message: 'Profile picture uploaded successfully',
+      profilePicture: user.profilePicture
+    });
 
-      if (validConflicts.length > 0) {
-        // Store temporary Cloudinary URL
-        await User.findByIdAndUpdate(req.user.id, {
-          'profilePicture.tempPath': req.file.path
-        });
+  } catch (error) {
+    console.error('Error processing profile picture:', error);
+    res.status(500).json({ error: 'Error processing profile picture' });
+  }
+}
 
-        return res.json({
-          success: false,
-          conflicts: validConflicts,
-          tempPath: req.file.path,
-          message: 'Similar profile pictures found'
-        });
-      }
 
-      // If no conflicts, proceed with upload
-      const user = await User.findByIdAndUpdate(
+// Handle user's decision about conflict
+static async resolveProfilePictureConflict(req, res) {
+  try {
+    const { action } = req.body;
+    const user = await User.findById(req.user.id);
+    const tempPath = user.profilePicture?.tempPath;
+
+    if (!tempPath) {
+      return res.status(400).json({ error: 'No pending profile picture upload found' });
+    }
+
+    if (action === 'proceed') {
+      // Update user's profile picture
+      const updatedUser = await User.findByIdAndUpdate(
         req.user.id,
         {
-          'profilePicture.url': req.file.path,
+          'profilePicture.url': tempPath,
           'profilePicture.verified': true,
-          'profilePicture.uploadedAt': new Date()
+          'profilePicture.uploadedAt': new Date(),
+          'profilePicture.tempPath': null
         },
         { new: true }
       );
 
       res.json({
         success: true,
-        message: 'Profile picture uploaded successfully',
-        profilePicture: user.profilePicture
+        message: 'Profile picture updated successfully',
+        profilePicture: updatedUser.profilePicture
       });
-
-    } catch (error) {
-      console.error('Error processing profile picture:', error);
-      res.status(500).json({ error: 'Error processing profile picture' });
-    }
-  }
-
-
-  // Handle user's decision about conflict
-  static async resolveProfilePictureConflict(req, res) {
-    try {
-      const { action } = req.body;
-      const user = await User.findById(req.user.id);
-      const tempPath = user.profilePicture?.tempPath;
-
-      if (!tempPath) {
-        return res.status(400).json({ error: 'No pending profile picture upload found' });
-      }
-
-      if (action === 'proceed') {
-        // Update user's profile picture
-        const updatedUser = await User.findByIdAndUpdate(
-          req.user.id,
-          {
-            'profilePicture.url': tempPath,
-            'profilePicture.verified': true,
-            'profilePicture.uploadedAt': new Date(),
-            'profilePicture.tempPath': null
-          },
-          { new: true }
-        );
-
-        res.json({
-          success: true,
-          message: 'Profile picture updated successfully',
-          profilePicture: updatedUser.profilePicture
-        });
-      } else {
-        // Cancel upload
-        await User.findByIdAndUpdate(req.user.id, {
-          'profilePicture.tempPath': null
-        });
-
-        res.json({
-          success: true,
-          message: 'Upload cancelled successfully'
-        });
-      }
-    } catch (error) {
-      console.error('Error resolving profile picture conflict:', error);
-      res.status(500).json({ error: 'Error resolving profile picture conflict' });
-    }
-  }
-
-
-  // Notify user of similar profile picture upload
-  static async notifyProfilePictureSimilarity(req, res) {
-    try {
-      const { userId, similarityDetails } = req.body;
-
-      // Get user details
-      const user = await User.findById(userId);
-      if (!user) {
-        return res.status(404).json({ error: 'User not found' });
-      }
-
-      // Create notification
-      const notification = new Notification({
-        userId: user._id,
-        type: 'PROFILE_PICTURE_SIMILARITY',
-        message: 'Someone attempted to upload a profile picture similar to yours',
-        data: similarityDetails,
-        status: 'unread'
+    } else {
+      // Cancel upload
+      await User.findByIdAndUpdate(req.user.id, {
+        'profilePicture.tempPath': null
       });
-
-      await notification.save();
 
       res.json({
         success: true,
-        message: 'Notification sent successfully'
+        message: 'Upload cancelled successfully'
       });
-    } catch (error) {
-      console.error('Error sending notification:', error);
-      res.status(500).json({ error: 'Error sending notification' });
     }
+  } catch (error) {
+    console.error('Error resolving profile picture conflict:', error);
+    res.status(500).json({ error: 'Error resolving profile picture conflict' });
   }
+}
+
+
+// Notify user of similar profile picture upload
+static async notifyProfilePictureSimilarity(req, res) {
+  try {
+    const { userId, similarityDetails } = req.body;
+
+    // Get user details
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Create notification
+    const notification = new Notification({
+      userId: user._id,
+      type: 'PROFILE_PICTURE_SIMILARITY',
+      message: 'Someone attempted to upload a profile picture similar to yours',
+      data: similarityDetails,
+      status: 'unread'
+    });
+
+    await notification.save();
+
+    res.json({
+      success: true,
+      message: 'Notification sent successfully'
+    });
+  } catch (error) {
+    console.error('Error sending notification:', error);
+    res.status(500).json({ error: 'Error sending notification' });
+  }
+}
 }
 
 module.exports = VerificationController;
