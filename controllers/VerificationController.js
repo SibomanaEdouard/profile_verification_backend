@@ -59,186 +59,85 @@ class VerificationController {
     }
   }
 
+  // Generate image signature for comparison
+  static async generateImageSignature(imagePath) {
+    try {
+      // Resize image to small dimensions and convert to grayscale for consistent comparison
+      const imageBuffer = await sharp(imagePath)
+        .resize(32, 32, { fit: 'fill' })
+        .grayscale()
+        .raw()
+        .toBuffer();
 
-
-
-  // // Check profile picture similarity
-  // static async checkProfilePictureSimilarity(req, res) {
-  //   try {
-  //     if (!req.file) {
-  //       return res.status(400).json({ error: 'No file uploaded' });
-  //     }
-
-  //     console.log('Uploaded file path:', req.file.path);
-  //     // Load the uploaded image
-  //     const uploadedImage = await Jimp.default.read(req.file.path);
-  //     // const uploadedImage = await Jimp.read(req.file.path);
-
-      
-  //     // Get all users with profile pictures
-  //     const users = await User.find({
-  //       'profilePicture.url': { $exists: true },
-  //       _id: { $ne: req.user.id }
-  //     });
-
-  //     let conflicts = [];
-
-  //     // Compare with existing profile pictures
-  //     for (const user of users) {
-  //       const existingImage = await Jimp.default.read(user.profilePicture.url);
-  //       console.log('Existing profile picture URL:', user.profilePicture.url);
-        
-  //       // Calculate image similarity 
-  //       const distance = Jimp.distance(uploadedImage, existingImage);
-  //       const similarity = 1 - distance;
-
-  //       if (similarity > 0.8) { // Threshold for similarity
-  //         conflicts.push({
-  //           userId: user._id,
-  //           similarity: similarity * 100
-  //         });
-  //       }
-  //     }
-
-  //     if (conflicts.length > 0) {
-  //       res.json({
-  //         success: false,
-  //         conflicts,
-  //         message: 'Similar profile pictures found'
-  //       });
-  //     } else {
-  //       // Save the profile picture if no conflicts
-  //       const user = await User.findByIdAndUpdate(
-  //         req.user.id,
-  //         {
-  //           'profilePicture.url': req.file.path,
-  //           'profilePicture.verified': true
-  //         },
-  //         { new: true }
-  //       );
-
-  //       res.json({
-  //         success: true,
-  //         message: 'Profile picture uploaded successfully'
-  //       });
-  //     }
-  //   } catch (error) {
-  //     console.error('Error processing profile picture:', error);
-  //     res.status(500).json({ error: 'Error processing profile picture' });
-  //   }
-  // }
-
-
-
-//  // Generate image hash for comparison
- static async generateImageHash(imagePath) {
-  try {
-    // Resize image to small dimensions for consistent comparison
-    const imageBuffer = await sharp(imagePath)
-      .resize(32, 32, { fit: 'fill' })
-      .grayscale()
-      .raw()
-      .toBuffer();
-
-    // Create hash from image data
-    return crypto.createHash('sha256').update(imageBuffer).digest('hex');
-  } catch (error) {
-    console.error('Error generating image hash:', error);
-    throw error;
-  }
-}
-
-// // Calculate image difference percentage
-static async calculateImageDifference(hash1, hash2) {
-  let diff = 0;
-  for (let i = 0; i < hash1.length; i++) {
-    if (hash1[i] !== hash2[i]) diff++;
-  }
-  return (1 - diff / hash1.length) * 100;
-}
-
-// Helper method for reliable file deletion
-static async safeDeleteFile(filePath) {
-  try {
-    await fs.access(filePath); // Check if file exists
-    await fs.unlink(filePath);
-  } catch (error) {
-    if (error.code === 'EPERM') {
-      console.warn(`File locked, retrying delete for: ${filePath}`);
-      // Wait briefly before retrying
-      await new Promise(resolve => setTimeout(resolve, 200));
-      try {
-        await fs.unlink(filePath);
-      } catch (retryError) {
-        console.warn(`Could not delete file ${filePath} on retry:`, retryError);
-      }
-    } else if (error.code !== 'ENOENT') { // Ignore "file not found" errors
+      // Create hash as image signature
+      return crypto.createHash('sha256').update(imageBuffer).digest('hex');
+    } catch (error) {
+      console.error('Error generating image signature:', error);
       throw error;
     }
   }
-}
 
-
-// Helper method for safe file moving
-static async safeMoveFile(sourcePath, targetPath) {
-  try {
-    await fs.mkdir(path.dirname(targetPath), { recursive: true });
-    await fs.copyFile(sourcePath, targetPath);
-    await VerificationController.safeDeleteFile(sourcePath);
-  } catch (error) {
-    throw new Error(`Failed to move file from ${sourcePath} to ${targetPath}: ${error.message}`);
-  }
-}
-
-static async checkProfilePictureSimilarity(req, res) {
-  const uploadedFilePath = req.file?.path;
-  let tempPath = null;
-
-  try {
-    if (!uploadedFilePath) {
-      return res.status(400).json({ error: 'No file uploaded' });
+  // Calculate similarity percentage between two signatures
+  static calculateSimilarity(sig1, sig2) {
+    let differences = 0;
+    const totalBits = sig1.length * 4; // Each hex character represents 4 bits
+    
+    for (let i = 0; i < sig1.length; i++) {
+      const byte1 = parseInt(sig1[i], 16);
+      const byte2 = parseInt(sig2[i], 16);
+      differences += (byte1 ^ byte2).toString(2).replace(/0/g, '').length;
     }
+    
+    return 100 - (differences * 100 / totalBits);
+  }
 
-    console.log('Processing uploaded file:', uploadedFilePath);
-
-    // Generate hash for uploaded image
-    const uploadedHash = await VerificationController.generateImageHash(uploadedFilePath);
-
-    // Get and compare with existing profile pictures
-    const users = await User.find({
-      'profilePicture.url': { $exists: true },
-      _id: { $ne: req.user.id }
-    });
-
-    const conflicts = await Promise.all(users.map(async user => {
-      try {
-        const existingHash = await VerificationController.generateImageHash(user.profilePicture.url);
-        const similarity = await VerificationController.calculateImageDifference(uploadedHash, existingHash);
-
-        if (similarity > 85) {
-          return {
-            userId: user._id,
-            username: user.username,
-            similarity: similarity.toFixed(2),
-            profilePicture: user.profilePicture.url
-          };
-        }
-      } catch (error) {
-        console.error(`Error comparing with user ${user._id}:`, error);
+  // Process profile picture upload and check similarity
+  static async checkProfilePictureSimilarity(req, res) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
       }
-      return null;
-    })).then(results => results.filter(Boolean));
 
-    if (conflicts.length > 0) {
-      // Move to temp directory instead of copy+delete
-      const tempDir = path.join(__dirname, '../temp');
-      await fs.mkdir(tempDir, { recursive: true });
-      tempPath = path.join(tempDir, `temp_${req.user.id}_${Date.now()}${path.extname(req.file.originalname)}`);
-      await VerificationController.safeMoveFile(uploadedFilePath, tempPath);
+      console.log('Processing uploaded file:', req.file.path);
 
-      // Create notifications
-      if (global.Notification) {
-        await Promise.all(conflicts.map(conflict =>
+      // Generate signature for uploaded image
+      const uploadedSignature = await VerificationController.generateImageSignature(req.file.path);
+
+      // Get all users with profile pictures
+      const users = await User.find({
+        'profilePicture.url': { $exists: true },
+        _id: { $ne: req.user.id }
+      });
+
+      // Check for similar images
+      const conflicts = await Promise.all(users.map(async user => {
+        try {
+          const existingSignature = await VerificationController.generateImageSignature(user.profilePicture.url);
+          const similarity = VerificationController.calculateSimilarity(uploadedSignature, existingSignature);
+
+          if (similarity > 85) { // Threshold for similarity
+            return {
+              userId: user._id,
+              username: user.username,
+              similarity: similarity.toFixed(2)
+            };
+          }
+        } catch (error) {
+          console.error(`Error comparing with user ${user._id}:`, error);
+        }
+        return null;
+      }));
+
+      const validConflicts = conflicts.filter(Boolean);
+
+      if (validConflicts.length > 0) {
+        // Store temporary file path
+        await User.findByIdAndUpdate(req.user.id, {
+          'profilePicture.tempPath': req.file.path
+        });
+
+        // Create notifications for existing users
+        await Promise.all(validConflicts.map(conflict => 
           global.Notification.createNotification({
             userId: conflict.userId,
             type: 'PROFILE_PICTURE_SIMILARITY',
@@ -250,111 +149,84 @@ static async checkProfilePictureSimilarity(req, res) {
             }
           })
         ));
+
+        return res.json({
+          success: false,
+          conflicts: validConflicts,
+          tempPath: req.file.path,
+          message: 'Similar profile pictures found'
+        });
       }
 
-      return res.json({
-        success: false,
-        conflicts,
-        tempPath,
-        message: 'Similar profile pictures found'
-      });
-    }
-
-    // Process and save the profile picture
-    const uploadsDir = path.join(__dirname, '../uploads');
-    await fs.mkdir(uploadsDir, { recursive: true });
-    const fileName = `profile_${req.user.id}_${Date.now()}${path.extname(req.file.originalname)}`;
-    const finalPath = path.join(uploadsDir, fileName);
-
-    // Optimize image
-    await sharp(uploadedFilePath)
-      .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
-      .jpeg({ quality: 80 })
-      .toFile(finalPath);
-
-    await VerificationController.safeDeleteFile(uploadedFilePath);
-
-    // Update user profile
-    const user = await User.findByIdAndUpdate(
-      req.user.id,
-      {
-        'profilePicture.url': finalPath,
-        'profilePicture.verified': true,
-        'profilePicture.uploadedAt': new Date()
-      },
-      { new: true }
-    );
-
-    res.json({
-      success: true,
-      message: 'Profile picture uploaded successfully',
-      profilePicture: user.profilePicture
-    });
-
-  } catch (error) {
-    console.error('Error processing profile picture:', error);
-    
-    // Clean up any files if error occurs
-    if (uploadedFilePath) {
-      await VerificationController.safeDeleteFile(uploadedFilePath);
-    }
-    if (tempPath) {
-      await VerificationController.safeDeleteFile(tempPath);
-    }
-    
-    res.status(500).json({ error: 'Error processing profile picture' });
-  }
-}
-
-// Handle conflict resolution
-static async resolveProfilePictureConflict(req, res) {
-  try {
-    const { tempPath, action } = req.body;
-
-    if (action === 'proceed') {
-      const uploadsDir = path.join(__dirname, '../uploads');
-      await fs.mkdir(uploadsDir, { recursive: true });
-      const fileName = `profile_${req.user.id}_${Date.now()}${path.extname(tempPath)}`;
-      const finalPath = path.join(uploadsDir, fileName);
-
-      // Optimize and save the image
-      await sharp(tempPath)
-        .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
-        .jpeg({ quality: 80 })
-        .toFile(finalPath);
-
-      // Update user profile
+      // If no conflicts, proceed with upload
       const user = await User.findByIdAndUpdate(
         req.user.id,
         {
-          'profilePicture.url': finalPath,
+          'profilePicture.url': req.file.path,
           'profilePicture.verified': true,
           'profilePicture.uploadedAt': new Date()
         },
         { new: true }
       );
 
-      // Clean up temp file
-      await fs.unlink(tempPath);
-
       res.json({
         success: true,
-        message: 'Profile picture updated successfully',
+        message: 'Profile picture uploaded successfully',
         profilePicture: user.profilePicture
       });
-    } else {
-      // Clean up temp file if user cancels
-      await fs.unlink(tempPath);
-      res.json({
-        success: true,
-        message: 'Upload cancelled successfully'
-      });
+
+    } catch (error) {
+      console.error('Error processing profile picture:', error);
+      res.status(500).json({ error: 'Error processing profile picture' });
     }
-  } catch (error) {
-    console.error('Error resolving profile picture conflict:', error);
-    res.status(500).json({ error: 'Error resolving profile picture conflict' });
   }
-}
+
+  // Handle user's decision about conflict
+  static async resolveProfilePictureConflict(req, res) {
+    try {
+      const { action } = req.body;
+      const user = await User.findById(req.user.id);
+      const tempPath = user.profilePicture?.tempPath;
+
+      if (!tempPath) {
+        return res.status(400).json({ error: 'No pending profile picture upload found' });
+      }
+
+      if (action === 'proceed') {
+        // Update user's profile picture
+        const updatedUser = await User.findByIdAndUpdate(
+          req.user.id,
+          {
+            'profilePicture.url': tempPath,
+            'profilePicture.verified': true,
+            'profilePicture.uploadedAt': new Date(),
+            'profilePicture.tempPath': null
+          },
+          { new: true }
+        );
+
+        res.json({
+          success: true,
+          message: 'Profile picture updated successfully',
+          profilePicture: updatedUser.profilePicture
+        });
+      } else {
+        // Cancel upload
+        await User.findByIdAndUpdate(req.user.id, {
+          'profilePicture.tempPath': null
+        });
+
+        res.json({
+          success: true,
+          message: 'Upload cancelled successfully'
+        });
+      }
+    } catch (error) {
+      console.error('Error resolving profile picture conflict:', error);
+      res.status(500).json({ error: 'Error resolving profile picture conflict' });
+    }
+  }
+
 
   // Notify user of similar profile picture upload
   static async notifyProfilePictureSimilarity(req, res) {

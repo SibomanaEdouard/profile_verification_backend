@@ -1,3 +1,4 @@
+// const { string } = require('@tensorflow/tfjs-node');
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
@@ -42,7 +43,8 @@ const userSchema = new mongoose.Schema({
     verified: {
       type: Boolean,
       default: false
-    }
+    },
+    tempPath:String
   },
   verificationStatus: {
     type: String,

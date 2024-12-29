@@ -8,13 +8,13 @@ const dotenv = require('dotenv');
 const session = require('express-session');
 const { initializePassport } = require("./controllers/AuthController");
 
-// Load environment variables
+// This is to Load environment variables
 dotenv.config();
 
-// Initialize express app
+//This is to  Initialize express app
 const app = express();
 
-// Connect to MongoDB
+//This is to  Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI, {
     serverSelectionTimeoutMS: 999999, 
 }).then(() => {
@@ -62,10 +62,8 @@ passport.deserializeUser((user, done) => {
 initializePassport(passport);
 
 // Serve uploaded files
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/api/v1/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Serve uploaded files
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Import routes
 const routes = require('./routes');

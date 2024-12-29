@@ -136,7 +136,6 @@ router.get('/auth/me', auth, async (req, res) => {
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
-        // console.log("The user is ", user)
         res.json(user);
         console.log("The response ", res.data)
     } catch (error) {
@@ -157,16 +156,6 @@ router.post(
     }
   );
 
-
-// // this is the profile picture
-// router.post('/verify/profile-picture',
-//     auth,
-//     upload.single('profilePicture'),
-//     (req, res, next) => {
-//         console.log('Processing profile picture');
-//         verificationController.checkProfilePictureSimilarity(req, res, next);
-//     }
-// );
 
 // Profile Routes
 router.get('/profile',
@@ -196,8 +185,8 @@ router.get('/verification/status', auth, async (req, res) => {
       // Fetch verification details from the user object or related database
       const verificationDetails = {
         linkedInVerified: user.linkedInVerified || true,
-        idVerified: user.idVerified || false,
-        pictureVerified: user.pictureVerified || false,
+        idVerified: user.nationalId.verified,
+        pictureVerified: user.profilePicture.verified,
         details: {
           name: user.name,
           email: user.email,
