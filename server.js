@@ -36,7 +36,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Session configuration
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'your-secret-key',
+    secret: process.env.SESSION_SECRET || 'my-secret-key',
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -69,9 +69,11 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Import routes
 const routes = require('./routes');
+const notificationRoutes = require('./routes/notification.routes')
 
 // Use routes
 app.use('/api/v1', routes);
+app.use('/api/v1/notifications',notificationRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

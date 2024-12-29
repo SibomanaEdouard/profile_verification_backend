@@ -4,51 +4,70 @@ const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 
 const initializePassport = (passport) => {
-  passport.use(new LinkedInStrategy({
-    clientID: process.env.LINKEDIN_CLIENT_ID,
-    clientSecret: process.env.LINKEDIN_CLIENT_SECRET,
-    callbackURL: process.env.LINKEDIN_CALLBACK_URL,
-    scope: ['r_emailaddress', 'r_liteprofile'],
-    state: true
-  }, async (accessToken, refreshToken, profile, done) => {
-    try {
-      let user = await User.findOne({ linkedinId: profile.id });
+    passport.use(new LinkedInStrategy({
+        clientID: process.env.LINKEDIN_CLIENT_ID,
+        clientSecret: process.env.LINKEDIN_CLIENT_SECRET,
+        callbackURL: process.env.LINKEDIN_CALLBACK_URL,
+        scope: ['openid', 'profile','email'],
+        state: true
+    }, async (accessToken, refreshToken, profile, done) => {
+        try {
+            console.log('LinkedIn profile received:',profile);
 
-      if (!user) {
-        user = await User.create({
-          linkedinId: profile.id,
-          email: profile.emails[0].value,
-          name: `${profile.name.givenName} ${profile.name.familyName}`,
-          // Additional fields will be updated later
-        });
-      }
+            let user = await User.findOne({ linkedinId: profile.id });
 
-      return done(null, user);
-    } catch (error) {
-      return done(error, null);
-    }
-  }));
+            if (!user) {
+                console.log('Creating new user');
+                user = await User.create({
+                    linkedinId: profile.id,
+                    email: profile.email,
+                    name: `${profile.givenName} ${profile.familyName}`,
+                    education:profile.education,
+                    profilePicture:profile.picture,
+                    workExperience:profile.workExperience,
+                    nationalId:profile.nationalId,
+                    verificationStatus:profile.verificationStatus
+                });
+            } else {
+                console.log('Existing user found');
+            }
 
-  passport.serializeUser((user, done) => {
-    done(null, user.id);
-  });
+            return done(null, user);
+        } catch (error) {
+            console.error('LinkedIn strategy error:', error);
+            return done(error, null);
+        }
+    }));
 
-  passport.deserializeUser(async (id, done) => {
-    try {
-      const user = await User.findById(id);
-      done(null, user);
-    } catch (error) {
-      done(error, null);
-    }
-  });
+    passport.serializeUser((user, done) => {
+        done(null, user.id);
+    });
+
+    passport.deserializeUser(async (id, done) => {
+        try {
+            const user = await User.findById(id);
+            done(null, user);
+        } catch (error) {
+            done(error, null);
+        }
+    });
 };
 
 const generateToken = (user) => {
-  return jwt.sign(
-    { id: user._id, email: user.email },
-    process.env.JWT_SECRET,
-    { expiresIn: '24h' }
-  );
+    try {
+        return jwt.sign(
+            { 
+                id: user._id, 
+                email: user.email,
+                linkedinId: user.linkedinId
+            },
+            process.env.JWT_SECRET,
+            { expiresIn: '24h' }
+        );
+    } catch (error) {
+        console.error('Token generation error:', error);
+        throw error;
+    }
 };
 
 module.exports = { initializePassport, generateToken };
