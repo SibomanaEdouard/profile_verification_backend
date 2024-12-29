@@ -1,10 +1,15 @@
 const Tesseract = require('tesseract.js');
-// const Jimp = require('jimp');
 const User = require('../models/User');
-const sharp = require('sharp');
-const path = require('path');
-const fs = require('fs').promises;
+const cloudinary = require('cloudinary').v2;
 const crypto = require('crypto');
+const axios = require('axios');
+
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
 
 class VerificationController {
   static async processNationalId(req, res) {
@@ -13,19 +18,18 @@ class VerificationController {
         return res.status(400).json({ error: 'No file uploaded' });
       }
 
-      // Log the received file details
-      console.log('Received file:', {
-        fieldname: req.file.fieldname,
-        originalname: req.file.originalname,
-        mimetype: req.file.mimetype,
-        path: req.file.path
-      });
+      console.log('Received file:', req.file);
 
-      // Perform OCR on the uploaded ID
+      // The file.path will now be the Cloudinary URL
       const { data: { text } } = await Tesseract.recognize(
         req.file.path,
         'eng',
-        { logger: m => console.log(m) }
+        { 
+          logger: m => console.log(m),
+          workerPath: 'https://unpkg.com/tesseract.js@v4.0.0/dist/worker.min.js',
+          langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+          corePath: 'https://unpkg.com/tesseract.js-core@v4.0.0/tesseract-core.wasm.js',
+        }
       );
 
       // Extract relevant information
@@ -33,7 +37,7 @@ class VerificationController {
       const dateOfBirth = text.match(/DOB:\s*(\d{2}\/\d{2}\/\d{4})/i)?.[1];
       const name = text.match(/Name:\s*([A-Za-z\s]+)/i)?.[1];
 
-      // Update user document
+      // Update user document with Cloudinary URL
       const user = await User.findByIdAndUpdate(
         req.user.id,
         {
@@ -60,27 +64,24 @@ class VerificationController {
   }
 
   // Generate image signature for comparison
-  static async generateImageSignature(imagePath) {
+  static async generateImageSignature(imageUrl) {
     try {
-      // Resize image to small dimensions and convert to grayscale for consistent comparison
-      const imageBuffer = await sharp(imagePath)
-        .resize(32, 32, { fit: 'fill' })
-        .grayscale()
-        .raw()
-        .toBuffer();
+      // Download image from Cloudinary URL
+      const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+      const buffer = Buffer.from(response.data);
 
       // Create hash as image signature
-      return crypto.createHash('sha256').update(imageBuffer).digest('hex');
+      return crypto.createHash('sha256').update(buffer).digest('hex');
     } catch (error) {
       console.error('Error generating image signature:', error);
       throw error;
     }
   }
 
-  // Calculate similarity percentage between two signatures
   static calculateSimilarity(sig1, sig2) {
+    // Existing code remains the same
     let differences = 0;
-    const totalBits = sig1.length * 4; // Each hex character represents 4 bits
+    const totalBits = sig1.length * 4;
     
     for (let i = 0; i < sig1.length; i++) {
       const byte1 = parseInt(sig1[i], 16);
@@ -91,7 +92,6 @@ class VerificationController {
     return 100 - (differences * 100 / totalBits);
   }
 
-  // Process profile picture upload and check similarity
   static async checkProfilePictureSimilarity(req, res) {
     try {
       if (!req.file) {
@@ -115,7 +115,7 @@ class VerificationController {
           const existingSignature = await VerificationController.generateImageSignature(user.profilePicture.url);
           const similarity = VerificationController.calculateSimilarity(uploadedSignature, existingSignature);
 
-          if (similarity > 85) { // Threshold for similarity
+          if (similarity > 85) {
             return {
               userId: user._id,
               username: user.username,
@@ -131,24 +131,10 @@ class VerificationController {
       const validConflicts = conflicts.filter(Boolean);
 
       if (validConflicts.length > 0) {
-        // Store temporary file path
+        // Store temporary Cloudinary URL
         await User.findByIdAndUpdate(req.user.id, {
           'profilePicture.tempPath': req.file.path
         });
-
-        // Create notifications for existing users
-        await Promise.all(validConflicts.map(conflict => 
-          global.Notification.createNotification({
-            userId: conflict.userId,
-            type: 'PROFILE_PICTURE_SIMILARITY',
-            message: 'Someone attempted to upload a profile picture similar to yours',
-            data: {
-              similarity: conflict.similarity,
-              timestamp: new Date(),
-              uploaderId: req.user.id
-            }
-          })
-        ));
 
         return res.json({
           success: false,
@@ -180,6 +166,7 @@ class VerificationController {
       res.status(500).json({ error: 'Error processing profile picture' });
     }
   }
+
 
   // Handle user's decision about conflict
   static async resolveProfilePictureConflict(req, res) {
