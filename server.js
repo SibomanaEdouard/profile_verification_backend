@@ -61,9 +61,6 @@ passport.deserializeUser((user, done) => {
 // Initialize Passport strategies
 initializePassport(passport);
 
-// Serve uploaded files
-app.use('/api/v1/uploads', express.static(path.join(__dirname, 'uploads')));
-
 
 // Import routes
 const routes = require('./routes');

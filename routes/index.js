@@ -8,6 +8,8 @@ const User = require('../models/User');
 const axios = require('axios')
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs')
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
 const router = express.Router();
 
@@ -26,23 +28,21 @@ const cleanupExpiredCodes = () => {
 // Run cleanup every 5 minutes
 setInterval(cleanupExpiredCodes, 5 * 60 * 1000);
 
-// Ensure the uploads folder exists
-const uploadsDir = 'uploads';
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
-// Configure multer storage
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadsDir);
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + '-' + file.originalname);
-  }
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
+// Configure storage
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'mpuza',
+    allowed_formats: ['jpg', 'png', 'jpeg','pdf']
+  }
+});
 
 const upload = multer({ storage: storage });
 
