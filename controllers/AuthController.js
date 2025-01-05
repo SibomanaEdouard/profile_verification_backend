@@ -31,7 +31,7 @@ const initializePassport = (passport) => {
             } else {
                 console.log('Existing user found');
             }
-
+            console.log("The user : ",user)
             return done(null, user);
         } catch (error) {
             console.error('LinkedIn strategy error:', error);
