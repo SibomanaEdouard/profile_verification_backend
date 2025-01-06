@@ -1,4 +1,3 @@
-// const { string } = require('@tensorflow/tfjs-node');
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
@@ -55,4 +54,4 @@ const userSchema = new mongoose.Schema({
   timestamps: true
 });
 
-module.exports = mongoose.model('ProductionUsers', userSchema);
+module.exports = mongoose.model('TestUsTest', userSchema);

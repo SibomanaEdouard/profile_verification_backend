@@ -10,14 +10,14 @@ const initializePassport = (passport) => {
         callbackURL: process.env.LINKEDIN_CALLBACK_URL,
         scope: ['openid', 'profile','email'],
         state: true
-    }, async (accessToken, refreshToken, profile, done) => {
+    }, async (accessToken, refreshToken, profile , done) => {
         try {
             console.log('LinkedIn profile received:',profile);
 
             let user = await User.findOne({ linkedinId: profile.id });
 
             if (!user) {
-                console.log('Creating new user');
+                console.log('Creating new user with this profile : ',profile);
                 user = await User.create({
                     linkedinId: profile.id,
                     email: profile.email,

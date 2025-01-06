@@ -8,6 +8,8 @@ const User = require('../models/User');
 const axios = require('axios')
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs')
+const { body, validationResult } = require('express-validator');
+
 
 const router = express.Router();
 
@@ -108,6 +110,7 @@ router.post('/auth/exchange-code', async (req, res) => {
         
         const { user } = codeData;
         const token = authController.generateToken(user);
+        console.log("token : ",token)
         
         // Make sure token is being generated correctly
         if (!token) {
@@ -173,6 +176,157 @@ router.get('/profile',
         }
     }
 );
+
+// This is the validation middleware 
+const validateProfileUpdate = [
+  body('name').optional().trim().notEmpty().withMessage('Name cannot be empty if provided'),
+  body('email').optional().trim().isEmail().withMessage('Invalid email format'),
+  // Education validation
+  body('education').optional().isArray(),
+  body('education.*.institution').optional().trim().notEmpty()
+    .withMessage('Institution name cannot be empty if provided'),
+  body('education.*.degree').optional().trim().notEmpty()
+    .withMessage('Degree cannot be empty if provided'),
+  body('education.*.fieldOfStudy').optional().trim().notEmpty()
+    .withMessage('Field of study cannot be empty if provided'),
+  body('education.*.startDate').optional()
+    .custom((value) => {
+      if (value && !isNaN(new Date(value).getTime())) {
+        return true;
+      }
+      throw new Error('Invalid start date format');
+    }),
+  body('education.*.endDate').optional()
+    .custom((value, { req, path }) => {
+      if (!value) return true; // Allow empty end date
+      if (isNaN(new Date(value).getTime())) {
+        throw new Error('Invalid end date format');
+      }
+      const index = parseInt(path.split('.')[1]);
+      const startDate = req.body.education[index]?.startDate;
+      if (startDate && new Date(value) < new Date(startDate)) {
+        throw new Error('End date must be after start date');
+      }
+      return true;
+    }),
+  
+  // Work experience validation
+  body('workExperience').optional().isArray(),
+  body('workExperience.*.company').optional().trim().notEmpty()
+    .withMessage('Company name cannot be empty if provided'),
+  body('workExperience.*.position').optional().trim().notEmpty()
+    .withMessage('Position cannot be empty if provided'),
+  body('workExperience.*.startDate').optional()
+    .custom((value) => {
+      if (value && !isNaN(new Date(value).getTime())) {
+        return true;
+      }
+      throw new Error('Invalid start date format');
+    }),
+  body('workExperience.*.endDate').optional()
+    .custom((value, { req, path }) => {
+      if (!value) return true; // Allow empty end date
+      if (isNaN(new Date(value).getTime())) {
+        throw new Error('Invalid end date format');
+      }
+      const index = parseInt(path.split('.')[1]);
+      const startDate = req.body.workExperience[index]?.startDate;
+      if (startDate && new Date(value) < new Date(startDate)) {
+        throw new Error('End date must be after start date');
+      }
+      return true;
+    })
+];
+
+// Update profile endpoint
+router.put('/profile', 
+  auth,
+  validateProfileUpdate,
+  async (req, res) => {
+    try {
+      // Check for validation errors
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        console.log('Validation errors:', errors.array());
+        return res.status(400).json({
+          message: 'Validation failed',
+          errors: errors.array()
+        });
+      }
+
+      const { name, email, education, workExperience } = req.body;
+      
+      // Log the received data for debugging
+      console.log('Received profile update:', {
+        name,
+        email,
+        educationCount: education?.length,
+        workExperienceCount: workExperience?.length
+      });
+
+      // Find user and check if exists
+      const user = await User.findById(req.user.id);
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      // Only update fields that are provided
+      if (name !== undefined) user.name = name;
+      if (email !== undefined) {
+        // Check if email is being changed and if it's already in use
+        if (email !== user.email) {
+          const emailExists = await User.findOne({ email, _id: { $ne: req.user.id } });
+          if (emailExists) {
+            return res.status(400).json({ message: 'Email already in use' });
+          }
+        }
+        user.email = email;
+      }
+      
+      // Update arrays only if they are provided
+      if (Array.isArray(education)) {
+        user.education = education.map(edu => ({
+          institution: edu.institution || '',
+          degree: edu.degree || '',
+          fieldOfStudy: edu.fieldOfStudy || '',
+          startDate: edu.startDate || null,
+          endDate: edu.endDate || null
+        }));
+      }
+
+      if (Array.isArray(workExperience)) {
+        user.workExperience = workExperience.map(work => ({
+          company: work.company || '',
+          position: work.position || '',
+          startDate: work.startDate || null,
+          endDate: work.endDate || null
+        }));
+      }
+
+      user.updatedAt = new Date();
+
+      // Save the updated user
+      await user.save();
+
+      // Return updated user without sensitive information
+      const updatedUser = await User.findById(req.user.id)
+        .select('-password -__v');
+        
+      console.log('Profile updated successfully');
+      
+      res.json({
+        message: 'Profile updated successfully',
+        user: updatedUser
+      });
+
+    } catch (error) {
+      console.error('Profile update error:', error);
+      res.status(500).json({ 
+        message: 'Error updating profile',
+        error: error.message 
+      });
+    }
+});
 
 // Verification Status Endpoint
 router.get('/verification/status', auth, async (req, res) => {
