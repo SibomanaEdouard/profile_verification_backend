@@ -1,64 +1,125 @@
 const Tesseract = require('tesseract.js');
-// const Jimp = require('jimp');
 const User = require('../models/User');
 const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs').promises;
 const crypto = require('crypto');
 const axios = require('axios');
-
+const { recognize } = require('tesseract.js');
 class VerificationController {
-  static async processNationalId(req, res) {
+
+  // this is to check if the uploaded id is really nationalId
+  static async validateNationalId(file) {
     try {
-      if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
+      // Validate file type
+      const allowedMimeTypes = ['image/jpeg', 'image/png', 'application/pdf'];
+      if (!allowedMimeTypes.includes(file.mimetype)) {
+        throw new Error('Invalid file type. Please upload an image or PDF.');
       }
-
-      // Log the received file details
-      console.log('Received file:', {
-        fieldname: req.file.fieldname,
-        originalname: req.file.originalname,
-        mimetype: req.file.mimetype,
-        path: req.file.path
-      });
-
-      // Perform OCR on the uploaded ID
-      const { data: { text } } = await Tesseract.recognize(
-        req.file.path,
-        'eng',
-        { logger: m => console.log(m) }
-      );
-
-      // Extract relevant information
-      const idNumber = text.match(/ID:\s*([A-Z0-9]+)/i)?.[1];
-      const dateOfBirth = text.match(/DOB:\s*(\d{2}\/\d{2}\/\d{4})/i)?.[1];
-      const name = text.match(/Name:\s*([A-Za-z\s]+)/i)?.[1];
-
-      // Update user document
-      const user = await User.findByIdAndUpdate(
-        req.user.id,
-        {
-          'nationalId.idNumber': idNumber,
-          'nationalId.dateOfBirth': dateOfBirth ? new Date(dateOfBirth) : undefined,
-          'nationalId.document': req.file.path,
-          'nationalId.verified': true
-        },
-        { new: true }
-      );
-
-      res.json({
-        success: true,
-        data: {
-          idNumber,
-          dateOfBirth,
-          name
-        }
-      });
+  
+      // Perform OCR
+      const { data: { text } } = await recognize(file.path, 'eng');
+  
+      // Check for National ID-specific keywords
+      const hasIdKeyword = /National ID|Names|Date of Birth/i.test(text);
+  
+      if (hasIdKeyword) {
+        return true; 
+      }
+  
+      return false; // The file does not match the expected format
     } catch (error) {
-      console.error('Error processing National ID:', error);
-      res.status(500).json({ error: 'Error processing National ID' });
+      console.error('Error validating National ID:', error);
+      throw new Error('Failed to validate National ID.');
     }
   }
+
+
+  // this is to preprocess 
+    static async preprocessImage(filePath) {
+    const processedPath = filePath.replace(/\.\w+$/, '_processed.png'); // Save as a new file
+    await sharp(filePath)
+      .grayscale()
+      .resize(1000, null) // Resize while maintaining aspect ratio
+      .toFile(processedPath);
+    return processedPath;
+  }
+  
+
+// this is the final  process of national id 
+static async processNationalId(req, res) {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const isValidId = await this.validateNationalId(req.file);
+    if (!isValidId) {
+      return res.status(400).json({ error: 'Uploaded file is not a valid National ID' });
+    }
+
+    const processedPath = await this.preprocessImage(req.file.path);
+    const { data: { text } } = await recognize(processedPath, 'eng');
+    const cleanText = text.replace(/[\n\r]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  //  parterns 
+  const namePattern = /Names\s*:?\s*y?\s*([A-Za-z\s]+?)(?:\s*as|\s*\.|$)/i;
+    const idPattern = /National\s*ID\s*(?:No\.?)?\s*[.,]?\s*([\d\s]+)(?:\s*\d?\s*\d?\s*$|\s*[A-Za-z]|$)/i;
+    const dobPattern = /Date\s*of\s*Birth\s*(?:=~\s*>)?\s*\|?\s*y?\s*(\d{2}\/\d{2}\/\d{4})/i;
+
+
+    // Extract and clean data
+    const nameMatch = cleanText.match(namePattern);
+    const idMatch = cleanText.match(idPattern);
+    const dobMatch = cleanText.match(dobPattern);
+
+    const name = nameMatch ? nameMatch[1].trim() : undefined;
+    const idNumber = idMatch ? idMatch[1].replace(/\s+/g, '').trim() : undefined;
+    let dateOfBirth = dobMatch ? dobMatch[1] : undefined;
+
+    console.log("name : ",name ,"NationalId : " ,idNumber , "DOB : ", dateOfBirth)
+
+    if (!name || !idNumber || !dateOfBirth) {
+      return res.status(400).json({ error: 'Failed to extract all required fields' });
+    }
+    console.log("This is the logged user :  ",req.user)
+
+    // this is to  compare the logged user's name with the name on the national id 
+    if(req.user.name === name){
+    let user = await User.findByIdAndUpdate(
+      req.user.id,
+      {
+        'nationalId.idNumber': idNumber,
+        'nationalId.dateOfBirth': new Date(dateOfBirth),
+        'nationalId.document': req.file.path,
+        'nationalId.verified': true,
+      },
+      { new: true }
+    );
+    // this is to save the  with the updated profile
+    await user.save();
+
+    res.json({
+      message:"Your national id is verified successfully!",
+      success: true,
+      data: { name, idNumber, dateOfBirth },
+    });
+  }else{
+    res.json({
+      message:"The name in from linkedin is difference from the name on your naational Id , please update it to match! ",
+      success:false,
+      data:null,
+    }
+    )
+  }
+  } catch (error) {
+    console.error('Error processing National ID:', error);
+    res.status(500).json({ error: 'Error processing National ID' });
+  }
+}
+
+  
+  
 
 
  // Generate image signature for comparison
