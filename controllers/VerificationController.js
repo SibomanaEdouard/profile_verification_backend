@@ -49,6 +49,15 @@ class VerificationController {
 // this is the final  process of national id 
 static async processNationalId(req, res) {
   try {
+    // this is to check if the nationalId is already verified 
+    if(req.user.nationalId.verified){
+      return res.json({
+        message:"Your nationalId is already verified! ",
+        success:false,
+        data:req.user
+      })
+    }
+ 
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
@@ -80,7 +89,7 @@ static async processNationalId(req, res) {
     console.log("name : ",name ,"NationalId : " ,idNumber , "DOB : ", dateOfBirth)
 
     if (!name || !idNumber || !dateOfBirth) {
-      return res.status(400).json({ error: 'Failed to extract all required fields' });
+      return res.status(400).json({ error: 'please improve the quality of your national Id image or pdf so that we may get all needed information!' });
     }
     console.log("This is the logged user :  ",req.user)
 
