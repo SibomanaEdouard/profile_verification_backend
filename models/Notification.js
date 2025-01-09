@@ -1,11 +1,21 @@
 const mongoose = require('mongoose');
 
 const notificationSchema = new mongoose.Schema({
+  senderId:{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    index: true
+  },
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true,
     index: true
+  },
+  resolved:{
+    type:Boolean,
+    default:false
   },
   type: {
     type: String,
@@ -56,6 +66,7 @@ notificationSchema.methods.markAsRead = async function() {
 // Static methods
 notificationSchema.statics.createNotification = async function(data) {
   const notification = new this({
+    senderId: data.senderId,
     userId: data.userId,
     type: data.type,
     message: data.message,

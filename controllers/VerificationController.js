@@ -3,7 +3,6 @@ const User = require('../models/User');
 const Notification = require('../models/Notification')
 const sharp = require('sharp');
 const path = require('path');
-// const fs = require('fs').promises;
 const fs = require('node:fs'); 
 const crypto = require('crypto');
 const axios = require('axios');
@@ -218,6 +217,7 @@ static async checkProfilePictureSimilarity(req, res) {
       // Create notifications for existing users
     await Promise.all(validConflicts.map(conflict => 
         Notification.createNotification({
+          senderId: req.user._id,
           userId: conflict.userId,
           type: 'PROFILE_PICTURE_SIMILARITY',
           message: 'Someone attempted to upload a profile picture similar to yours',
@@ -278,7 +278,7 @@ static async resolveProfilePictureConflict(req, res) {
         req.user.id,
         {
           'profilePicture.url': tempPath,
-          'profilePicture.verified': true,
+          'profilePicture.verified': false,
           'profilePicture.uploadedAt': new Date(),
           'profilePicture.tempPath': null
         },
@@ -287,7 +287,7 @@ static async resolveProfilePictureConflict(req, res) {
 
       res.json({
         success: true,
-        message: 'Profile picture updated successfully',
+        message: 'Profile picture uploaded  successfully and  it is waiting for the other user approval to be verified!',
         profilePicture: updatedUser.profilePicture
       });
     } else {
@@ -308,6 +308,8 @@ static async resolveProfilePictureConflict(req, res) {
 }
 
 
+
+
 // Notify user of similar profile picture upload
 static async notifyProfilePictureSimilarity(req, res) {
   try {
@@ -321,6 +323,7 @@ static async notifyProfilePictureSimilarity(req, res) {
 
     // Create notification
     const notification = new Notification({
+      senderId: req.user._id,
       userId: user._id,
       type: 'PROFILE_PICTURE_SIMILARITY',
       message: 'Someone attempted to upload a profile picture similar to yours',
