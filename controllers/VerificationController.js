@@ -1,11 +1,17 @@
 const Tesseract = require('tesseract.js');
 const User = require('../models/User');
+const Notification = require('../models/Notification')
 const sharp = require('sharp');
 const path = require('path');
-const fs = require('fs').promises;
+// const fs = require('fs').promises;
+const fs = require('node:fs'); 
 const crypto = require('crypto');
 const axios = require('axios');
+// const faceapi = require('face-api.js');
+const canvas = require('canvas');
 const { recognize } = require('tesseract.js');
+
+
 class VerificationController {
 
   // this is to check if the uploaded id is really nationalId
@@ -127,11 +133,11 @@ static async processNationalId(req, res) {
   }
 }
 
-  
-  
 
 
- // Generate image signature for comparison
+
+
+  // this is to generate the image signature
  static async generateImageSignature(imagePath) {
   try {
     // Resize image to small dimensions and convert to grayscale for consistent comparison
@@ -172,6 +178,7 @@ static async checkProfilePictureSimilarity(req, res) {
 
     console.log('Processing uploaded file:', req.file.path);
 
+
     // Generate signature for uploaded image
     const uploadedSignature = await VerificationController.generateImageSignature(req.file.path);
 
@@ -209,8 +216,8 @@ static async checkProfilePictureSimilarity(req, res) {
       });
 
       // Create notifications for existing users
-      await Promise.all(validConflicts.map(conflict => 
-        global.Notification.createNotification({
+    await Promise.all(validConflicts.map(conflict => 
+        Notification.createNotification({
           userId: conflict.userId,
           type: 'PROFILE_PICTURE_SIMILARITY',
           message: 'Someone attempted to upload a profile picture similar to yours',
@@ -221,6 +228,7 @@ static async checkProfilePictureSimilarity(req, res) {
           }
         })
       ));
+
 
       return res.json({
         success: false,
@@ -243,7 +251,7 @@ static async checkProfilePictureSimilarity(req, res) {
 
     res.json({
       success: true,
-      message: 'Profile picture uploaded successfully',
+      message: 'Profile picture verified successfully',
       profilePicture: user.profilePicture
     });
 
