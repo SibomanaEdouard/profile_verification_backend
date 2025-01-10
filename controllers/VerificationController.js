@@ -127,7 +127,7 @@ static async processNationalId(req, res) {
   }
   } catch (error) {
     console.error('Error processing National ID:', error);
-    res.status(500).json({ error: "Please upload the valid national id image " });
+    res.status(500).json({ error: "something went wrong , please try again later! " });
   }
 }
 
