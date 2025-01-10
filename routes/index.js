@@ -375,6 +375,28 @@ router.get('/verification/status', auth, async (req, res) => {
     auth,
     verificationController.notifyProfilePictureSimilarity
   );
+
+  // This is the endpoint to delete the user account
+router.delete('/delete-account', auth, async (req, res) => {
+  try {
+      const userId = req.user.id; 
+
+      // Find and delete the user from the database
+      const user = await User.findByIdAndDelete(userId);
+
+      if (!user) {
+          return res.status(404).json({ message: 'User not found' });
+      }
+
+      console.log(`User with ID ${userId} has been deleted`);
+
+      res.status(200).json({ message: 'Account deleted successfully' });
+  } catch (error) {
+      console.error('Account deletion error:', error);
+      res.status(500).json({ message: 'Failed to delete account', error: error.message });
+  }
+});
+
   
 
 module.exports = router;

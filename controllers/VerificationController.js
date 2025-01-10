@@ -192,8 +192,10 @@ static async checkProfilePictureSimilarity(req, res) {
         if (similarity > 85) { // Threshold for similarity
           return {
             userId: user._id,
-            username: user.username,
-            similarity: similarity.toFixed(2)
+            name: user.name,
+            similarity: similarity.toFixed(2),
+            profilePicture:user.profilePicture.url
+            
           };
         }
       } catch (error) {
