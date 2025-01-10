@@ -6,7 +6,6 @@ const path = require('path');
 const fs = require('node:fs'); 
 const crypto = require('crypto');
 const axios = require('axios');
-// const faceapi = require('face-api.js');
 const canvas = require('canvas');
 const { recognize } = require('tesseract.js');
 
@@ -17,9 +16,9 @@ class VerificationController {
   static async validateNationalId(file) {
     try {
       // Validate file type
-      const allowedMimeTypes = ['image/jpeg', 'image/png', 'application/pdf'];
+      const allowedMimeTypes = ['image/jpeg', 'image/png'];
       if (!allowedMimeTypes.includes(file.mimetype)) {
-        throw new Error('Invalid file type. Please upload an image or PDF.');
+        throw new Error('Invalid file type. Please upload an image .');
       }
   
       // Perform OCR
@@ -128,12 +127,9 @@ static async processNationalId(req, res) {
   }
   } catch (error) {
     console.error('Error processing National ID:', error);
-    res.status(500).json({ error: 'Error processing National ID' });
+    res.status(500).json({ error: "Please upload the valid national id image " });
   }
 }
-
-
-
 
 
   // this is to generate the image signature
@@ -220,7 +216,7 @@ static async checkProfilePictureSimilarity(req, res) {
           senderId: req.user._id,
           userId: conflict.userId,
           type: 'PROFILE_PICTURE_SIMILARITY',
-          message: 'Someone attempted to upload a profile picture similar to yours',
+          message: `${req.user.name} attempted to upload a profile picture similar to yours`,
           data: {
             similarity: conflict.similarity,
             timestamp: new Date(),
@@ -326,7 +322,7 @@ static async notifyProfilePictureSimilarity(req, res) {
       senderId: req.user._id,
       userId: user._id,
       type: 'PROFILE_PICTURE_SIMILARITY',
-      message: 'Someone attempted to upload a profile picture similar to yours',
+      message: `${req.user.name} attempted to upload a profile picture similar to yours`,
       data: similarityDetails,
       status: 'unread'
     });

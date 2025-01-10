@@ -75,7 +75,7 @@ router.post('/profile-picture-decision', auth, async (req, res) => {
   
         notificationData = {
           type: 'PROFILE_PICTURE_APPROVED',
-          message: 'Your profile picture has been approved',
+          message: `${req.user.name} has approved  your profile picture`,
           data: {
             timestamp: new Date(),
             approverId: req.user.id,
@@ -93,7 +93,7 @@ router.post('/profile-picture-decision', auth, async (req, res) => {
   
         notificationData = {
           type: 'PROFILE_PICTURE_REJECTED',
-          message: 'Your profile picture was rejected due to similarity with existing user',
+          message: `${req.user.name} has rejected your profile picture please use another one !`,
           data: {
             timestamp: new Date(),
             rejectorId: req.user.id,
